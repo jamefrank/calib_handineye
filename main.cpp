@@ -8,6 +8,10 @@
 #include <opencv2/aruco/charuco.hpp>
 #include <opencv2/core/eigen.hpp>
 
+#include <pcl/point_types.h>
+#include <pcl/point_cloud.h>
+#include <pcl/io/pcd_io.h>
+
 #include <boost/filesystem.hpp>
 
 #include <iostream>
@@ -245,6 +249,13 @@ int main(int argc, char *argv[])
   ceres::Solve(options, &problem, &summary);
   std::cout << summary.FullReport() << "\n";
 
+  // corners in target coord
+  std::vector<cv::Point3f> chessboardPoints;
+  for (int i = 0; i < boardSize.height; ++i) {
+      for (int j = 0; j < boardSize.width; ++j) {
+          chessboardPoints.emplace_back((j+1) * squareSize/1000.0f, (i+1) * squareSize/1000.0f, 0.0f);
+      }
+  }
 
   cv::Mat final_cam2gripper = (cv::Mat_<double>(1, 6) << 
     parameters_[R_target2cam.size()*6+3], 
@@ -268,7 +279,30 @@ int main(int argc, char *argv[])
     cv::Mat chessPos{ 0.0,0.0,0.0,1.0 };  //4*1矩阵，单独求机械臂坐标系下，标定板XYZ
     cv::Mat worldPos = Homo_gripper2base[i] * Homo_cam2gripper * final_target2cam * chessPos;
     cout << i << ": " << worldPos.t() << endl;
+
+    // save corners as point cloud (camera coord)
+    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+    cloud->width = chessboardPoints.size();
+    cloud->height = 1;
+    cloud->is_dense = false;
+    cloud->points.resize(chessboardPoints.size());
+    for (size_t k = 0; k < chessboardPoints.size(); ++k) {
+      const auto& pt = chessboardPoints[k];
+      cv::Mat pt_homo = (cv::Mat_<double>(4, 1) << pt.x, pt.y, pt.z, 1.0);
+      cv::Mat pt_cam_homo = final_target2cam * pt_homo;
+      cloud->points[k].x = pt_cam_homo.at<double>(0, 0)*1000;
+      cloud->points[k].y = pt_cam_homo.at<double>(1, 0)*1000;
+      cloud->points[k].z = pt_cam_homo.at<double>(2, 0)*1000;
+    }
+    boost::filesystem::path filepath(imageFilenames[i]);
+    std::string basename = filepath.stem().string();
+    std::string out_file = outputDir + "/" + basename + ".pcd";
+    pcl::io::savePCDFile(out_file, *cloud);
+
   }
+
+   
+
 
   // rerror
   for(int i=0; i<R_target2cam.size(); i++){
