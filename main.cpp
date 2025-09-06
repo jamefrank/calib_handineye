@@ -185,6 +185,42 @@ int main(int argc, char *argv[])
       if (verbose){
         std::string out_file = outputDir + "/" + filepath.filename().string();
         cv::imwrite(out_file, imageCopy);
+
+      // save corners as point cloud (camera coord)
+        // corners in target coord
+      std::vector<cv::Point3f> chessboardPoints;
+      for (int i = 0; i < boardSize.height; ++i) {
+          for (int j = 0; j < boardSize.width; ++j) {
+              chessboardPoints.emplace_back((j+1) * squareSize/1000.0f, (i+1) * squareSize/1000.0f, 0.0f);
+          }
+      }
+        //
+      cv::Mat tmp = (cv::Mat_<double>(1, 6) << 
+      tvec.at<double>(0),
+      tvec.at<double>(1), 
+      tvec.at<double>(2), 
+      rvec.at<double>(0),
+      rvec.at<double>(1), 
+      rvec.at<double>(2));
+      cv::Mat final_target2cam = calib_eyeinhand::utils::attitudeVectorToMatrix(tmp, false, "");
+
+      pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+      cloud->width = chessboardPoints.size();
+      cloud->height = 1;
+      cloud->is_dense = false;
+      cloud->points.resize(chessboardPoints.size());
+      for (size_t k = 0; k < chessboardPoints.size(); ++k) {
+        const auto& pt = chessboardPoints[k];
+        cv::Mat pt_homo = (cv::Mat_<double>(4, 1) << pt.x, pt.y, pt.z, 1.0);
+        cv::Mat pt_cam_homo = final_target2cam * pt_homo;
+        cloud->points[k].x = pt_cam_homo.at<double>(0, 0)*1000;
+        cloud->points[k].y = pt_cam_homo.at<double>(1, 0)*1000;
+        cloud->points[k].z = pt_cam_homo.at<double>(2, 0)*1000;
+      }
+      boost::filesystem::path filepath(imageFilenames[i]);
+      std::string basename = filepath.stem().string();
+      out_file = outputDir + "/corner_" + basename + ".pcd";
+      pcl::io::savePCDFile(out_file, *cloud);
       }
     }
   }
@@ -247,7 +283,7 @@ int main(int argc, char *argv[])
 
   // opt by ceres
   spdlog::info("start opt by ceres ...");
-  double* parameters_ = new double[6*(R_target2cam.size()+1)];
+  double* parameters_ = new double[6*(R_target2cam.size())];
   for(int i=0; i<R_target2cam.size(); i++){
     cv::Rodrigues(R_target2cam[i], rvec);
     parameters_[i*6 + 0] = rvec.at<double>(0);
@@ -259,12 +295,13 @@ int main(int argc, char *argv[])
   }
   calib_eyeinhand::utils::HomogeneousMtr2RT(Homo_cam2gripper, tempR, tempT);
   cv::Rodrigues(tempR, rvec);
-  parameters_[R_target2cam.size()*6 + 0] = rvec.at<double>(0);
-  parameters_[R_target2cam.size()*6 + 1] = rvec.at<double>(1);
-  parameters_[R_target2cam.size()*6 + 2] = rvec.at<double>(2);
-  parameters_[R_target2cam.size()*6 + 3] = tempT.at<double>(0);
-  parameters_[R_target2cam.size()*6 + 4] = tempT.at<double>(1);
-  parameters_[R_target2cam.size()*6 + 5] = tempT.at<double>(2);
+  double parameters_cam2gripper[6];
+  parameters_cam2gripper[0] = rvec.at<double>(0);
+  parameters_cam2gripper[1] = rvec.at<double>(1);
+  parameters_cam2gripper[2] = rvec.at<double>(2);
+  parameters_cam2gripper[3] = tempT.at<double>(0);
+  parameters_cam2gripper[4] = tempT.at<double>(1);
+  parameters_cam2gripper[5] = tempT.at<double>(2);
 
   ceres::Problem problem;
   //
@@ -285,20 +322,21 @@ int main(int argc, char *argv[])
 
         ceres::CostFunction* cost_funciton = HandinEyeReprojectionError::Create(obj, corner, K_Eigen, gr1, gt1, gr2, gt2);
         ceres::LossFunction *lossFunction = new ceres::CauchyLoss(1.0);
-        problem.AddResidualBlock(cost_funciton, lossFunction, parameters_+i*6, parameters_+R_target2cam.size()*6);
+        problem.AddResidualBlock(cost_funciton, lossFunction, parameters_+i*6, parameters_cam2gripper);
       }
     }
   }
+  problem.SetParameterBlockConstant(parameters_);
   //
-  for(int i=0;i<all_plane_coefs.size();i++){
-    for(int k=0; k<objs.rows; k++){
-        Eigen::Vector3d obj(objs.at<cv::Vec3f>(k)[0], objs.at<cv::Vec3f>(k)[1], objs.at<cv::Vec3f>(k)[2]);
-        ceres::CostFunction* cost_funciton = Point2PlaneError::Create(all_plane_coefs[i], obj, false);
-        ceres::LossFunction *lossFunction = new ceres::CauchyLoss(1.0);
-        // for(int j=0; j<all_plane_coefs.size()*all_plane_coefs.size();j++)
-        problem.AddResidualBlock(cost_funciton, lossFunction, parameters_+i*6);
-    }
-  }
+  // for(int i=0;i<all_plane_coefs.size();i++){
+  //   for(int k=0; k<objs.rows; k++){
+  //       Eigen::Vector3d obj(objs.at<cv::Vec3f>(k)[0], objs.at<cv::Vec3f>(k)[1], objs.at<cv::Vec3f>(k)[2]);
+  //       ceres::CostFunction* cost_funciton = Point2PlaneError::Create(all_plane_coefs[i], obj, false);
+  //       ceres::LossFunction *lossFunction = new ceres::CauchyLoss(1.0);
+  //       // for(int j=0; j<all_plane_coefs.size()*all_plane_coefs.size();j++)
+  //       problem.AddResidualBlock(cost_funciton, lossFunction, parameters_+i*6);
+  //   }
+  // }
 
   ceres::Solver::Options options;
   options.linear_solver_type = ceres::DENSE_SCHUR;
@@ -310,21 +348,21 @@ int main(int argc, char *argv[])
   ceres::Solve(options, &problem, &summary);
   std::cout << summary.FullReport() << "\n";
 
-  // corners in target coord
-  std::vector<cv::Point3f> chessboardPoints;
-  for (int i = 0; i < boardSize.height; ++i) {
-      for (int j = 0; j < boardSize.width; ++j) {
-          chessboardPoints.emplace_back((j+1) * squareSize/1000.0f, (i+1) * squareSize/1000.0f, 0.0f);
-      }
-  }
+  // // corners in target coord
+  // std::vector<cv::Point3f> chessboardPoints;
+  // for (int i = 0; i < boardSize.height; ++i) {
+  //     for (int j = 0; j < boardSize.width; ++j) {
+  //         chessboardPoints.emplace_back((j+1) * squareSize/1000.0f, (i+1) * squareSize/1000.0f, 0.0f);
+  //     }
+  // }
 
   cv::Mat final_cam2gripper = (cv::Mat_<double>(1, 6) << 
-    parameters_[R_target2cam.size()*6+3], 
-    parameters_[R_target2cam.size()*6+4], 
-    parameters_[R_target2cam.size()*6+5], 
-    parameters_[R_target2cam.size()*6+0], 
-    parameters_[R_target2cam.size()*6+1], 
-    parameters_[R_target2cam.size()*6+2]);
+    parameters_cam2gripper[3], 
+    parameters_cam2gripper[4], 
+    parameters_cam2gripper[5], 
+    parameters_cam2gripper[0], 
+    parameters_cam2gripper[1], 
+    parameters_cam2gripper[2]);
   Homo_cam2gripper = calib_eyeinhand::utils::attitudeVectorToMatrix(final_cam2gripper, false, "");
   calib_eyeinhand::utils::log_cvmat(Homo_cam2gripper, "cam2gripper(CERES)");
   spdlog::info("valid chess board original point in base [after opt]...");
@@ -341,24 +379,24 @@ int main(int argc, char *argv[])
     cv::Mat worldPos = Homo_gripper2base[i] * Homo_cam2gripper * final_target2cam * chessPos;
     cout << i << ": " << worldPos.t() << endl;
 
-    // save corners as point cloud (camera coord)
-    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
-    cloud->width = chessboardPoints.size();
-    cloud->height = 1;
-    cloud->is_dense = false;
-    cloud->points.resize(chessboardPoints.size());
-    for (size_t k = 0; k < chessboardPoints.size(); ++k) {
-      const auto& pt = chessboardPoints[k];
-      cv::Mat pt_homo = (cv::Mat_<double>(4, 1) << pt.x, pt.y, pt.z, 1.0);
-      cv::Mat pt_cam_homo = final_target2cam * pt_homo;
-      cloud->points[k].x = pt_cam_homo.at<double>(0, 0)*1000;
-      cloud->points[k].y = pt_cam_homo.at<double>(1, 0)*1000;
-      cloud->points[k].z = pt_cam_homo.at<double>(2, 0)*1000;
-    }
-    boost::filesystem::path filepath(imageFilenames[i]);
-    std::string basename = filepath.stem().string();
-    std::string out_file = outputDir + "/corner_" + basename + ".pcd";
-    pcl::io::savePCDFile(out_file, *cloud);
+    // // save corners as point cloud (camera coord)
+    // pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+    // cloud->width = chessboardPoints.size();
+    // cloud->height = 1;
+    // cloud->is_dense = false;
+    // cloud->points.resize(chessboardPoints.size());
+    // for (size_t k = 0; k < chessboardPoints.size(); ++k) {
+    //   const auto& pt = chessboardPoints[k];
+    //   cv::Mat pt_homo = (cv::Mat_<double>(4, 1) << pt.x, pt.y, pt.z, 1.0);
+    //   cv::Mat pt_cam_homo = final_target2cam * pt_homo;
+    //   cloud->points[k].x = pt_cam_homo.at<double>(0, 0)*1000;
+    //   cloud->points[k].y = pt_cam_homo.at<double>(1, 0)*1000;
+    //   cloud->points[k].z = pt_cam_homo.at<double>(2, 0)*1000;
+    // }
+    // boost::filesystem::path filepath(imageFilenames[i]);
+    // std::string basename = filepath.stem().string();
+    // std::string out_file = outputDir + "/corner_" + basename + ".pcd";
+    // pcl::io::savePCDFile(out_file, *cloud);
   }
 
   // rerror

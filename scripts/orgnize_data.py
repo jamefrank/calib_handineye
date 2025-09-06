@@ -4,8 +4,8 @@ import json
 import math
 
 # 源文件夹路径和目标文件夹路径
-source_dir = '/home/frank/Downloads/calib(2)/calib'  # 替换为你的源文件夹路径
-target_dir = '/home/frank/Pictures/handeye/data_0906_1'  # 替换为你想保存处理后文件的目标文件夹路径
+source_dir = '/home/frank/Downloads/calib(3)/calib'  # 替换为你的源文件夹路径
+target_dir = '/home/frank/Pictures/handeye/data_0906_2'  # 替换为你想保存处理后文件的目标文件夹路径
 txt_path = os.path.join(target_dir, 'arm_pose.txt')
 
 # 确保目标文件夹存在
@@ -64,6 +64,7 @@ with open(txt_path, 'w') as output_file:
                         math.degrees(tcp_pose[5])     # rz (rad → deg)
                     ]
                     line = ' '.join(f"{val:10.6f}" for val in converted)
+                    # line = json_file_path + " : " + line
                     output_file.write(line + '\n')
                 else:
                     print(f"警告: {json_file_path} 中 tcp_pose 数据长度不为6")
