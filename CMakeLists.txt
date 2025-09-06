@@ -41,3 +41,18 @@ target_link_libraries(calib_eyeinhand
   spdlog::spdlog_header_only
   ${Boost_LIBRARIES}
 )
+
+add_executable(test_cloud_opt 
+  main_cloud.cpp
+  src/utils.cpp
+)
+
+target_link_libraries(test_cloud_opt
+  ${YAML_CPP_LIBRARIES}
+  ${PCL_LIBRARIES}
+  ${EIGEN3_LIBRARIES}
+  ${OpenCV_LIBRARIES}
+  ${CERES_LIBRARIES}
+  spdlog::spdlog_header_only
+  ${Boost_LIBRARIES}
+)

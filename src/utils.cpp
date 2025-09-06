@@ -5,6 +5,16 @@
 
 #include <fstream>
 
+#include <filesystem>  // C++17
+#include <pcl/io/ply_io.h>
+
+#include <pcl/segmentation/approximate_progressive_morphological_filter.h>
+#include <pcl/segmentation/extract_clusters.h>
+#include <pcl/segmentation/progressive_morphological_filter.h>
+#include <pcl/segmentation/sac_segmentation.h>
+#include <pcl/filters/extract_indices.h>
+#include <pcl/features/moment_of_inertia_estimation.h>
+
 bool calib_eyeinhand::utils::parse_K(const YAML::Node & config, std::string name, cv::Mat & K)
 {
     if(config[name]){
@@ -57,6 +67,32 @@ void calib_eyeinhand::utils::log_cvmat(const cv::Mat & mat, const std::string & 
     std::ostringstream oss;
     oss << name << " = " << std::endl << mat << std::endl;
     spdlog::info("{}", oss.str());
+}
+
+bool calib_eyeinhand::utils::loadPointCloud(const std::string& path, pcl::PointCloud<pcl::PointXYZ>::Ptr cloud) {
+    std::string extension = std::filesystem::path(path).extension().string();
+    
+    // 转为小写，避免 .Ply 或 .PCD 等大小写问题
+    std::transform(extension.begin(), extension.end(), extension.begin(), ::tolower);
+
+    if (extension == ".pcd") {
+        if (pcl::io::loadPCDFile(path, *cloud) == 0) {
+            std::cout << "Loaded PCD: " << path << std::endl;
+            return true;
+        }
+    }
+    else if (extension == ".ply") {
+        if (pcl::io::loadPLYFile(path, *cloud) == 0) {
+            std::cout << "Loaded PLY: " << path << std::endl;
+            return true;
+        }
+    }
+    else {
+        std::cerr << "Unsupported file format: " << extension << std::endl;
+    }
+
+    std::cerr << "Failed to load file: " << path << std::endl;
+    return false;
 }
 
 cv::Mat calib_eyeinhand::utils::load_arm_pose(const std::string & file_path)
@@ -329,5 +365,77 @@ bool calib_eyeinhand::utils::detectChessCornersAndPose(const cv::Size & boardSiz
 	}
 
 	return false;
+}
+
+void calib_eyeinhand::utils::extractPlaneAndProjectiton(const pcl::PointCloud<pcl::PointXYZ>::Ptr frame, Eigen::Vector4d& coef, pcl::PointCloud<pcl::PointXYZ>::Ptr plane) {
+    //
+	assert(frame->points.size() > 0);
+
+    //
+    pcl::SACSegmentation<pcl::PointXYZ> seg;
+    seg.setOptimizeCoefficients(true);
+    seg.setModelType(pcl::SACMODEL_PLANE);
+    seg.setMethodType(pcl::SAC_RANSAC);
+    seg.setDistanceThreshold(0.03);
+    seg.setMaxIterations(1000);
+
+    pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
+    pcl::PointIndices::Ptr inliers(new pcl::PointIndices);
+    seg.setInputCloud(frame);
+    seg.segment(*inliers, *coefficients);
+
+    //
+    pcl::PointCloud<pcl::PointXYZ>::Ptr plane1(new pcl::PointCloud<pcl::PointXYZ>);
+    pcl::ExtractIndices<pcl::PointXYZ> extract;
+    extract.setInputCloud(frame);
+    extract.setIndices(inliers);
+    extract.setNegative(false);
+    extract.filter(*plane1);
+
+    // obb
+    pcl::MomentOfInertiaEstimation<pcl::PointXYZ> feature_extractor;
+    feature_extractor.setInputCloud(plane1);
+    feature_extractor.compute();
+
+    Eigen::Vector3f major_vector, middle_vector, minor_vector;
+    Eigen::Vector3f mass_center;
+    pcl::PointXYZ min_point_OBB;
+    pcl::PointXYZ max_point_OBB;
+    pcl::PointXYZ position_OBB;
+    Eigen::Matrix3f rotational_matrix_OBB;
+
+    feature_extractor.getOBB(min_point_OBB, max_point_OBB, position_OBB, rotational_matrix_OBB);
+    feature_extractor.getEigenVectors(major_vector, middle_vector, minor_vector);
+    feature_extractor.getMassCenter(mass_center);
+
+    // project
+    Eigen::Vector3f normal = major_vector.cross(middle_vector);
+    normal.normalize();
+
+    pcl::PointXYZ p1 = plane1->points[0];
+    Eigen::Vector3d vector1(0 - p1.x, 0 - p1.y, 0 - p1.z);
+    Eigen::Vector3d vector2(normal(0), normal(1), normal(2));
+    double c = 1.0;
+    if (vector1.dot(vector2) < 0)
+        c = -1;
+    coef(0) = normal(0) * c;
+    coef(1) = normal(1) * c;
+    coef(2) = normal(2) * c;
+    coef(3) = -1 * normal.dot(mass_center) * c;
+
+    plane->clear();
+    for (auto point : plane1->points) {
+        Eigen::Vector3f normal(coef(0), coef(1), coef(2));
+        Eigen::Vector3f tmp(point.x, point.y, point.z);
+        double scale = (tmp - mass_center).dot(normal);
+        tmp = tmp - scale * normal;
+        pcl::PointXYZ newpoint;
+        newpoint.x = tmp(0);
+        newpoint.y = tmp(1);
+        newpoint.z = tmp(2);
+        plane->points.push_back(newpoint);
+    }
+    plane->height = 1;
+    plane->width = plane1->points.size();
 }
 

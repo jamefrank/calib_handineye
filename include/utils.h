@@ -3,11 +3,16 @@
 #include <opencv2/imgproc.hpp>
 #include <opencv2/opencv.hpp>
 
+#include <pcl/point_types.h>
+#include <pcl/io/pcd_io.h>
+
 namespace calib_eyeinhand{
     namespace utils{
         bool parse_K(const YAML::Node& config, std::string name, cv::Mat& K);
         void parse_D(const YAML::Node& config, std::string name, cv::Mat& D);
         void log_cvmat(const cv::Mat& mat, const std::string& name = "Mat");
+
+        bool loadPointCloud(const std::string& path, pcl::PointCloud<pcl::PointXYZ>::Ptr cloud);
 
         cv::Mat load_arm_pose(const std::string& file_path);
 
@@ -30,6 +35,9 @@ namespace calib_eyeinhand{
             const cv::Mat& img, const cv::Mat& K, const cv::Mat& D, const cv::Mat& objs,
             cv::Mat& draw_img, cv::Mat& corners,cv::Mat& rvec, cv::Mat& tvec, double& rerror
         );
+
+        //提取平面，并且将内点映射到提取的平面上
+        void extractPlaneAndProjectiton(const pcl::PointCloud<pcl::PointXYZ>::Ptr frame, Eigen::Vector4d& coef, pcl::PointCloud<pcl::PointXYZ>::Ptr plane);
     }
 }
 

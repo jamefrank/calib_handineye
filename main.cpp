@@ -60,6 +60,7 @@ int main(int argc, char *argv[])
   calib_eyeinhand::utils::log_cvmat(K, "K");
   calib_eyeinhand::utils::log_cvmat(D, "D");
 
+  //
   std::vector<std::string> imageFilenames;
   boost::filesystem::directory_iterator itr;
   std::string fileExtension = parser.get<std::string>("extension");
@@ -76,8 +77,56 @@ int main(int argc, char *argv[])
       imageFilenames.push_back(itr->path().string());
   }
   assert(imageFilenames.size() == ee_poses.rows);
-  spdlog::info("loaded {} pairs data", imageFilenames.size());
+  spdlog::info("loaded {} pairs img data", imageFilenames.size());
   std::sort(imageFilenames.begin(), imageFilenames.end());
+
+  //
+  std::vector<std::string> cloudFileNames;
+  std::string cloudExtension = ".ply";
+  for (boost::filesystem::directory_iterator itr(inputDir); itr != boost::filesystem::directory_iterator(); ++itr) {
+      if (!boost::filesystem::is_regular_file(itr->status())) {
+          continue;
+      }
+      std::string filename = itr->path().filename().string();
+      // check if file extension matches
+      if (filename.compare(filename.length() - cloudExtension.length(), cloudExtension.length(), cloudExtension) != 0) {
+          continue;
+      }
+
+      cloudFileNames.push_back(itr->path().string());
+  }
+  assert(cloudFileNames.size() == ee_poses.rows);
+  spdlog::info("loaded {} pairs cloud data", cloudFileNames.size());
+  std::sort(cloudFileNames.begin(), cloudFileNames.end());
+
+  //
+  std::vector<Eigen::Vector4d> all_plane_coefs;
+  for (int i = 0; i < cloudFileNames.size(); i++) {
+    const auto& cloud_file = cloudFileNames[i];
+    pcl::PointCloud<pcl::PointXYZ>::Ptr frame(new pcl::PointCloud<pcl::PointXYZ>());
+    calib_eyeinhand::utils::loadPointCloud(cloud_file, frame);
+    for (auto& point : *frame) {
+        point.x /= 1000.0;
+        point.y /= 1000.0;
+        point.z /= 1000.0;
+    }
+
+    pcl::PointCloud<pcl::PointXYZ>::Ptr plane_cloud(new pcl::PointCloud<pcl::PointXYZ>());
+    Eigen::Vector4d plane_coef;
+    calib_eyeinhand::utils::extractPlaneAndProjectiton(frame, plane_coef, plane_cloud);
+    all_plane_coefs.push_back(plane_coef);
+    if (verbose){
+        boost::filesystem::path filepath(cloudFileNames[i]);
+        std::string basename = filepath.stem().string();
+        std::string out_file = outputDir + "/plane_" + basename + ".pcd";
+        for (auto& point : *plane_cloud) {
+            point.x *= 1000.0;
+            point.y *= 1000.0;
+            point.z *= 1000.0;
+        }
+        pcl::io::savePCDFile(out_file, *plane_cloud);
+    }
+  }
 
   //
   spdlog::info("detect corners and calc target in camera rvec + tvec ...");
@@ -151,7 +200,7 @@ int main(int argc, char *argv[])
 
   spdlog::info("valid chess board original point in base...");
   for (int i = 0; i < Homo_target2cam.size(); i++){
-    cv::Mat chessPos{ 0.0,0.0,0.0,1.0 };  //4*1矩阵，单独求机械臂坐标系下，标定板XYZ
+    cv::Mat chessPos{ 0.04825,0.04825,0.0,1.0 };  //4*1矩阵，单独求机械臂坐标系下，标定板XYZ
     cv::Mat worldPos = Homo_gripper2base[i] * Homo_cam2gripper * Homo_target2cam[i] * chessPos;
     cout << i << ": " << worldPos.t() << endl;
   }
@@ -218,6 +267,7 @@ int main(int argc, char *argv[])
   parameters_[R_target2cam.size()*6 + 5] = tempT.at<double>(2);
 
   ceres::Problem problem;
+  //
   for(int i=0; i<R_target2cam.size(); i++){
     for(int j=0; j<R_target2cam.size(); j++){
       for(int k=0; k<objs.rows; k++){
@@ -239,6 +289,17 @@ int main(int argc, char *argv[])
       }
     }
   }
+  //
+  for(int i=0;i<all_plane_coefs.size();i++){
+    for(int k=0; k<objs.rows; k++){
+        Eigen::Vector3d obj(objs.at<cv::Vec3f>(k)[0], objs.at<cv::Vec3f>(k)[1], objs.at<cv::Vec3f>(k)[2]);
+        ceres::CostFunction* cost_funciton = Point2PlaneError::Create(all_plane_coefs[i], obj, false);
+        ceres::LossFunction *lossFunction = new ceres::CauchyLoss(1.0);
+        // for(int j=0; j<all_plane_coefs.size()*all_plane_coefs.size();j++)
+        problem.AddResidualBlock(cost_funciton, lossFunction, parameters_+i*6);
+    }
+  }
+
   ceres::Solver::Options options;
   options.linear_solver_type = ceres::DENSE_SCHUR;
   options.minimizer_progress_to_stdout = false;
@@ -276,7 +337,7 @@ int main(int argc, char *argv[])
       parameters_[i*6+1], 
       parameters_[i*6+2]);
     cv::Mat final_target2cam = calib_eyeinhand::utils::attitudeVectorToMatrix(tmp, false, "");
-    cv::Mat chessPos{ 0.0,0.0,0.0,1.0 };  //4*1矩阵，单独求机械臂坐标系下，标定板XYZ
+    cv::Mat chessPos{ 0.04825,0.04825,0.0,1.0 };  //4*1矩阵，单独求机械臂坐标系下，标定板XYZ
     cv::Mat worldPos = Homo_gripper2base[i] * Homo_cam2gripper * final_target2cam * chessPos;
     cout << i << ": " << worldPos.t() << endl;
 
@@ -296,13 +357,9 @@ int main(int argc, char *argv[])
     }
     boost::filesystem::path filepath(imageFilenames[i]);
     std::string basename = filepath.stem().string();
-    std::string out_file = outputDir + "/" + basename + ".pcd";
+    std::string out_file = outputDir + "/corner_" + basename + ".pcd";
     pcl::io::savePCDFile(out_file, *cloud);
-
   }
-
-   
-
 
   // rerror
   for(int i=0; i<R_target2cam.size(); i++){
