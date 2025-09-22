@@ -4,8 +4,8 @@ import json
 import math
 
 # 源文件夹路径和目标文件夹路径
-source_dir = '/home/frank/Downloads/calib(3)/calib'  # 替换为你的源文件夹路径
-target_dir = '/home/frank/Pictures/handeye/data_0906_2'  # 替换为你想保存处理后文件的目标文件夹路径
+source_dir = '/home/frank/Downloads/scene_biaoding'  # 替换为你的源文件夹路径
+target_dir = '/home/frank/Pictures/handeye/data_0919'  # 替换为你想保存处理后文件的目标文件夹路径
 txt_path = os.path.join(target_dir, 'arm_pose.txt')
 
 # 确保目标文件夹存在
@@ -36,7 +36,7 @@ json_files = []
 # 收集所有 tcp_pose.json 文件及其时间戳
 for root, dirs, files in os.walk(source_dir):
     for file in files:
-        if file == 'tcp_pose.json':
+        if file == 'robot_status.json':
             json_path = os.path.join(root, file)
             folder_name = os.path.basename(root)  # 即 20250905_035504
             timestamp = folder_name
@@ -53,7 +53,8 @@ with open(txt_path, 'w') as output_file:
         try:
             with open(json_file_path, 'r') as f:
                 data = json.load(f)
-                tcp_pose = data.get('tcp_pose', [])
+                robot_status = data.get('robot_status', {})
+                tcp_pose = robot_status.get('tcp_pose', [])
                 if len(tcp_pose) == 6:
                     converted = [
                         tcp_pose[0] * 1000,           # x (m → mm)

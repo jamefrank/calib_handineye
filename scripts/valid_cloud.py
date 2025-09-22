@@ -13,21 +13,43 @@ T_cam2gripper = np.array(
     ]
 )
 
+T_cam2gripper = np.array(
+    [
+        [-0.9911663196276865, 0.008075903845932679, 0.1323786486287656, -0.02568267584494283*1000],
+        [-0.006142340295011098, -0.9998685046199561, 0.01500816860090346, 0.06761670194007216*1000],
+        [0.1324824459745788, 0.01406247652883771, 0.9910855907854117, -0.07498239799783919*1000],
+        [0.0, 0.0, 0.0, 1.0]       
+    ]
+)
+
+# T_cam2gripper = np.array(
+#     [
+#         [-0.9911663196276865, 0.008075903845932679, 0.1323786486287656, -0.02568267584494283],
+#         [-0.006142340295011098, -0.9998685046199561, 0.01500816860090346, 0.06761670194007216],
+#         [0.1324824459745788, 0.01406247652883771, 0.9910855907854117, -0.07498239799783919],
+#         [0.0, 0.0, 0.0, 1.0]       
+#     ]
+# )
 
 
 
+
+input_dir = "/home/frank/Downloads/scene_001"
+# input_dir = "/home/frank/Downloads/scene_biaoding"
 input_dir = "/home/frank/Downloads/calib(3)/calib"
 output_dir = "/home/frank/Pictures/handeye/output_cloud"
 
 for item in os.listdir(input_dir):
-    json_path = os.path.join(input_dir, item, "aubo_robot", "tcp_pose.json")
+    json_path = os.path.join(input_dir, item, "aubo_robot", "robot_status.json")
     ply_path = os.path.join(input_dir, item, "mech_eye", "point_cloud.ply")
     with open(json_path, 'r') as f:
         data = json.load(f)
-        tcp_pose = data.get('tcp_pose', [])
+        robot_status = data.get('robot_status', {})
+        tcp_pose = robot_status.get('tcp_pose', [])
         R = transforms3d.euler.euler2mat(tcp_pose[-3], tcp_pose[-2], tcp_pose[-1], axes='sxyz')
         RT = transforms3d.affines.compose(
             T=[tcp_pose[0]*1000, tcp_pose[1]*1000, tcp_pose[2]*1000],      # 平移
+            # T=[tcp_pose[0], tcp_pose[1], tcp_pose[2]],      # 平移
             R=R,              # 旋转矩阵
             Z=[1.0, 1.0, 1.0] # 缩放（单位缩放）
         )

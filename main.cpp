@@ -99,34 +99,6 @@ int main(int argc, char *argv[])
   spdlog::info("loaded {} pairs cloud data", cloudFileNames.size());
   std::sort(cloudFileNames.begin(), cloudFileNames.end());
 
-  //
-  std::vector<Eigen::Vector4d> all_plane_coefs;
-  for (int i = 0; i < cloudFileNames.size(); i++) {
-    const auto& cloud_file = cloudFileNames[i];
-    pcl::PointCloud<pcl::PointXYZ>::Ptr frame(new pcl::PointCloud<pcl::PointXYZ>());
-    calib_eyeinhand::utils::loadPointCloud(cloud_file, frame);
-    for (auto& point : *frame) {
-        point.x /= 1000.0;
-        point.y /= 1000.0;
-        point.z /= 1000.0;
-    }
-
-    pcl::PointCloud<pcl::PointXYZ>::Ptr plane_cloud(new pcl::PointCloud<pcl::PointXYZ>());
-    Eigen::Vector4d plane_coef;
-    calib_eyeinhand::utils::extractPlaneAndProjectiton(frame, plane_coef, plane_cloud);
-    all_plane_coefs.push_back(plane_coef);
-    if (verbose){
-        boost::filesystem::path filepath(cloudFileNames[i]);
-        std::string basename = filepath.stem().string();
-        std::string out_file = outputDir + "/plane_" + basename + ".pcd";
-        for (auto& point : *plane_cloud) {
-            point.x *= 1000.0;
-            point.y *= 1000.0;
-            point.z *= 1000.0;
-        }
-        pcl::io::savePCDFile(out_file, *plane_cloud);
-    }
-  }
 
   //
   spdlog::info("detect corners and calc target in camera rvec + tvec ...");
@@ -149,8 +121,12 @@ int main(int argc, char *argv[])
   std::vector<cv::Mat> R_target2cam;
   std::vector<cv::Mat> T_target2cam;
   std::vector<cv::Mat> all_corners;
+  std::vector<Eigen::Vector4d> all_plane_coefs;
+
 
   for(int i=0; i<imageFilenames.size(); i++){
+    spdlog::info("{} start process", imageFilenames[i]);
+
     cv::Mat image = cv::imread(imageFilenames[i], -1);
 
     bool bsuc = false;
@@ -222,11 +198,39 @@ int main(int argc, char *argv[])
       out_file = outputDir + "/corner_" + basename + ".pcd";
       pcl::io::savePCDFile(out_file, *cloud);
       }
+
+      //
+      const auto& cloud_file = cloudFileNames[i];
+      pcl::PointCloud<pcl::PointXYZ>::Ptr frame(new pcl::PointCloud<pcl::PointXYZ>());
+      calib_eyeinhand::utils::loadPointCloud(cloud_file, frame);
+      for (auto& point : *frame) {
+          point.x /= 1000.0;
+          point.y /= 1000.0;
+          point.z /= 1000.0;
+      }
+
+      pcl::PointCloud<pcl::PointXYZ>::Ptr plane_cloud(new pcl::PointCloud<pcl::PointXYZ>());
+      Eigen::Vector4d plane_coef;
+      calib_eyeinhand::utils::extractPlaneAndProjectiton(frame, plane_coef, plane_cloud);
+      all_plane_coefs.push_back(plane_coef);
+      if (verbose){
+          boost::filesystem::path filepath(cloudFileNames[i]);
+          std::string basename = filepath.stem().string();
+          std::string out_file = outputDir + "/plane_" + basename + ".pcd";
+          for (auto& point : *plane_cloud) {
+              point.x *= 1000.0;
+              point.y *= 1000.0;
+              point.z *= 1000.0;
+          }
+          pcl::io::savePCDFile(out_file, *plane_cloud);
+      }
+
     }
   }
 
   spdlog::info("detect imgs: {} ", R_target2cam.size());
   assert(R_target2cam.size()>=3);
+
 
   // calib
   spdlog::info("start calib hand in eye by TSAI...");
@@ -326,17 +330,17 @@ int main(int argc, char *argv[])
       }
     }
   }
-  problem.SetParameterBlockConstant(parameters_);
-  //
-  // for(int i=0;i<all_plane_coefs.size();i++){
-  //   for(int k=0; k<objs.rows; k++){
-  //       Eigen::Vector3d obj(objs.at<cv::Vec3f>(k)[0], objs.at<cv::Vec3f>(k)[1], objs.at<cv::Vec3f>(k)[2]);
-  //       ceres::CostFunction* cost_funciton = Point2PlaneError::Create(all_plane_coefs[i], obj, false);
-  //       ceres::LossFunction *lossFunction = new ceres::CauchyLoss(1.0);
-  //       // for(int j=0; j<all_plane_coefs.size()*all_plane_coefs.size();j++)
-  //       problem.AddResidualBlock(cost_funciton, lossFunction, parameters_+i*6);
-  //   }
-  // }
+  // problem.SetParameterBlockConstant(parameters_);
+  
+  for(int i=0;i<all_plane_coefs.size();i++){
+    for(int k=0; k<objs.rows; k++){
+        Eigen::Vector3d obj(objs.at<cv::Vec3f>(k)[0], objs.at<cv::Vec3f>(k)[1], objs.at<cv::Vec3f>(k)[2]);
+        ceres::CostFunction* cost_funciton = Point2PlaneError::Create(all_plane_coefs[i], obj, false);
+        ceres::LossFunction *lossFunction = new ceres::CauchyLoss(1.0);
+        for(int j=0; j<all_plane_coefs.size()*all_plane_coefs.size();j++)
+          problem.AddResidualBlock(cost_funciton, lossFunction, parameters_+i*6);
+    }
+  }
 
   ceres::Solver::Options options;
   options.linear_solver_type = ceres::DENSE_SCHUR;
