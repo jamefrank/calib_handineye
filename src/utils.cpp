@@ -297,7 +297,7 @@ bool calib_eyeinhand::utils::detectCharucoCornersAndPose(
 	cv::undistort(image, undistImg, K, D);
     undistImg.copyTo(imageCopy);
     cv::cvtColor(undistImg, gray, cv::COLOR_BGR2GRAY);
-    cv::equalizeHist(gray, gray);
+    // cv::equalizeHist(gray, gray);
 	// cv::Mat blur_usm;
     // cv::GaussianBlur(gray, blur_usm, cv::Size(0, 0), 25);
     // cv::addWeighted(gray, 1.5, blur_usm, -0.5, 0, gray);
@@ -331,6 +331,8 @@ bool calib_eyeinhand::utils::detectCharucoCornersAndPose(
 			return true;
         }
     }
+    else
+        spdlog::error("Charuco Board detect failed (num corners): {}", charucoIds.rows);
   
 	return false;
 }
