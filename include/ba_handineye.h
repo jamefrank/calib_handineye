@@ -19,7 +19,7 @@ struct HandinEyeReprojectionError
 
     // target2cam1,cam2gripper: rvec+tvec
     template <typename T>
-    bool operator()(const T* const target2cam1, const T* const cam2gripper, T* residuals) const{
+    bool operator()(const T* const target2cam1, const T* const cam2gripper, const T* const KFxy, T* residuals) const{
         //
         T p_target[3];
         p_target[0] = T(point_target_(0));
@@ -57,19 +57,21 @@ struct HandinEyeReprojectionError
         T rotation[3] = {T(-1) * cam2gripper[0], T(-1) * cam2gripper[1], T(-1) * cam2gripper[2]};
         ceres::AngleAxisRotatePoint(rotation, p_gripper2, p_cam2);
 
-        // 
-        T p_cam2_Obs[2];
-        T fx = T(K_(0,0));
+         //
+        T u = p_cam2[0] / p_cam2[2];
+        T v = p_cam2[1] / p_cam2[2];
+
+        T fx = KFxy[0];
         T cx = T(K_(0,2));
-        T fy = T(K_(1,1));
+        T p_x = fx*u + cx;
+
+        T fy = KFxy[1];
         T cy = T(K_(1,2));
+        T p_y = fy*v + cy;
+        
+        residuals[0] = p_x - T(corner_cam2_(0));
+        residuals[1] = p_y - T(corner_cam2_(1));
 
-        p_cam2_Obs[0] = (T(corner_cam2_(0)) - cx)/fx*p_cam2[2];
-        p_cam2_Obs[1] = (T(corner_cam2_(1)) - cy)/fy*p_cam2[2];
-
-        //
-        residuals[0] = p_cam2[0] - p_cam2_Obs[0];
-        residuals[1] = p_cam2[1] - p_cam2_Obs[1];
 
         return true;
     }
@@ -83,7 +85,7 @@ struct HandinEyeReprojectionError
         const Eigen::Matrix3d& gr2,
         const Eigen::Vector3d& gt2)
     {
-        return (new ceres::AutoDiffCostFunction<HandinEyeReprojectionError, 2, 6, 6>(new HandinEyeReprojectionError(obj, corner, K, gr1, gt1, gr2, gt2)));
+        return (new ceres::AutoDiffCostFunction<HandinEyeReprojectionError, 2, 6, 6, 2>(new HandinEyeReprojectionError(obj, corner, K, gr1, gt1, gr2, gt2)));
     }
 
     // members
@@ -127,9 +129,9 @@ public:
         T distance = (predict[0] * T(_plane1(0)) + predict[1] * T(_plane1(1)) + predict[2] * T(_plane1(2)) + T(_plane1(3))) / normal_norm;
 
 
-        residuals[0] = distance * T(_plane1(0))/normal_norm;
-        residuals[1] = distance * T(_plane1(1))/normal_norm;
-        residuals[2] = distance * T(_plane1(2))/normal_norm;
+        residuals[0] = distance * T(_plane1(0))/normal_norm*T(1000);
+        residuals[1] = distance * T(_plane1(1))/normal_norm*T(1000);
+        residuals[2] = distance * T(_plane1(2))/normal_norm*T(1000);
 
         return true;
     }

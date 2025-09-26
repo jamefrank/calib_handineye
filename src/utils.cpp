@@ -69,6 +69,47 @@ void calib_eyeinhand::utils::log_cvmat(const cv::Mat & mat, const std::string & 
     spdlog::info("{}", oss.str());
 }
 
+void calib_eyeinhand::utils::save_cvmat(const cv::Mat& mat, const std::string& name, const std::string& outputDir) {
+    std::string res_path = outputDir + "/calibration.txt";
+    std::ofstream file(res_path, std::ios::app);
+    if (!file.is_open()) {
+        std::cerr << "无法打开文件 " << res_path << std::endl;
+        return;
+    }
+
+    file << std::endl;
+    file << name << " = " << std::endl;
+    
+    // 确保矩阵是连续的，便于遍历
+    cv::Mat tmp;
+    if (mat.isContinuous()) {
+        tmp = mat;
+    } else {
+        tmp = mat.clone();
+    }
+
+    for (int i = 0; i < tmp.rows; ++i) {
+        for (int j = 0; j < tmp.cols; ++j) {
+            file << tmp.at<double>(i, j);  // 假设是 double 类型
+            if (j < tmp.cols - 1) file << " ";  // 列间空格分隔
+        }
+        file << std::endl;
+    }
+    file << std::endl;  // 矩阵后空一行
+    file.close();
+}
+
+void calib_eyeinhand::utils::save_error(int j, double error, const std::string& outputDir) {
+    std::string res_path = outputDir + "/calibration.txt";
+    std::ofstream file(res_path, std::ios::app);
+    if (!file.is_open()) {
+        std::cerr << "无法打开文件 " << res_path << std::endl;
+        return;
+    }
+    file << j << ": " << error << " mm" << std::endl; 
+    file.close();
+}
+
 bool calib_eyeinhand::utils::loadPointCloud(const std::string& path, pcl::PointCloud<pcl::PointXYZ>::Ptr cloud) {
     std::string extension = std::filesystem::path(path).extension().string();
     

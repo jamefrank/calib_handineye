@@ -11,6 +11,8 @@ namespace calib_eyeinhand{
         bool parse_K(const YAML::Node& config, std::string name, cv::Mat& K);
         void parse_D(const YAML::Node& config, std::string name, cv::Mat& D);
         void log_cvmat(const cv::Mat& mat, const std::string& name = "Mat");
+        void save_cvmat(const cv::Mat& mat, const std::string& name, const std::string& outputDir);
+        void save_error(int j, double error, const std::string& outputDir);
 
         bool loadPointCloud(const std::string& path, pcl::PointCloud<pcl::PointXYZ>::Ptr cloud);
 

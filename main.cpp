@@ -199,31 +199,31 @@ int main(int argc, char *argv[])
       pcl::io::savePCDFile(out_file, *cloud);
       }
 
-      //
-      const auto& cloud_file = cloudFileNames[i];
-      pcl::PointCloud<pcl::PointXYZ>::Ptr frame(new pcl::PointCloud<pcl::PointXYZ>());
-      calib_eyeinhand::utils::loadPointCloud(cloud_file, frame);
-      for (auto& point : *frame) {
-          point.x /= 1000.0;
-          point.y /= 1000.0;
-          point.z /= 1000.0;
-      }
+      // //
+      // const auto& cloud_file = cloudFileNames[i];
+      // pcl::PointCloud<pcl::PointXYZ>::Ptr frame(new pcl::PointCloud<pcl::PointXYZ>());
+      // calib_eyeinhand::utils::loadPointCloud(cloud_file, frame);
+      // for (auto& point : *frame) {
+      //     point.x /= 1000.0;
+      //     point.y /= 1000.0;
+      //     point.z /= 1000.0;
+      // }
 
-      pcl::PointCloud<pcl::PointXYZ>::Ptr plane_cloud(new pcl::PointCloud<pcl::PointXYZ>());
-      Eigen::Vector4d plane_coef;
-      calib_eyeinhand::utils::extractPlaneAndProjectiton(frame, plane_coef, plane_cloud);
-      all_plane_coefs.push_back(plane_coef);
-      if (verbose){
-          boost::filesystem::path filepath(cloudFileNames[i]);
-          std::string basename = filepath.stem().string();
-          std::string out_file = outputDir + "/plane_" + basename + ".pcd";
-          for (auto& point : *plane_cloud) {
-              point.x *= 1000.0;
-              point.y *= 1000.0;
-              point.z *= 1000.0;
-          }
-          pcl::io::savePCDFile(out_file, *plane_cloud);
-      }
+      // pcl::PointCloud<pcl::PointXYZ>::Ptr plane_cloud(new pcl::PointCloud<pcl::PointXYZ>());
+      // Eigen::Vector4d plane_coef;
+      // calib_eyeinhand::utils::extractPlaneAndProjectiton(frame, plane_coef, plane_cloud);
+      // all_plane_coefs.push_back(plane_coef);
+      // if (verbose){
+      //     boost::filesystem::path filepath(cloudFileNames[i]);
+      //     std::string basename = filepath.stem().string();
+      //     std::string out_file = outputDir + "/plane_" + basename + ".pcd";
+      //     for (auto& point : *plane_cloud) {
+      //         point.x *= 1000.0;
+      //         point.y *= 1000.0;
+      //         point.z *= 1000.0;
+      //     }
+      //     pcl::io::savePCDFile(out_file, *plane_cloud);
+      // }
 
     }
   }
@@ -237,54 +237,29 @@ int main(int argc, char *argv[])
   cv::calibrateHandEye(R_gripper2base, T_gripper2base, R_target2cam, T_target2cam, R_cam2gripper, T_cam2gripper, cv::CALIB_HAND_EYE_TSAI);
   Homo_cam2gripper = calib_eyeinhand::utils::RT2HomogeneousMatrix(R_cam2gripper, T_cam2gripper);
   calib_eyeinhand::utils::log_cvmat(Homo_cam2gripper, "cam2gripper(CALIB_HAND_EYE_TSAI)");
+  calib_eyeinhand::utils::save_cvmat(Homo_cam2gripper, "cam2gripper(CALIB_HAND_EYE_TSAI)", outputDir);
+
 
   spdlog::info("valid chess board original point in base...");
-  for (int i = 0; i < Homo_target2cam.size(); i++){
-    cv::Mat chessPos{ 0.04825,0.04825,0.0,1.0 };  //4*1矩阵，单独求机械臂坐标系下，标定板XYZ
-    cv::Mat worldPos = Homo_gripper2base[i] * Homo_cam2gripper * Homo_target2cam[i] * chessPos;
-    cout << i << ": " << worldPos.t() << endl;
-  }
-
-  //
-  cv::Mat rvec, tvec;
-  cv::Mat rerror_mat = cv::Mat(R_target2cam.size(), R_target2cam.size(), CV_64FC1);
-  for(int i=0; i<R_target2cam.size(); i++){
-    for(int j=0; j<R_target2cam.size(); j++){
-
-      if(i==j){
-        cv::Rodrigues(R_target2cam[i], rvec);
-        tvec = T_target2cam[i];
+  for(int j=0; j<objs.rows; j++){
+    double error = 0;
+    cv::Mat basePos;
+    for (int i = 0; i < Homo_target2cam.size(); i++){
+      cv::Mat chessPos = (cv::Mat_<double>(4, 1) <<objs.at<cv::Vec3f>(j)[0],objs.at<cv::Vec3f>(j)[1],0.0,1.0 );  //4*1矩阵，单独求机械臂坐标系下，标定板XYZ
+      cv::Mat worldPos = Homo_gripper2base[i] * Homo_cam2gripper * Homo_target2cam[i] * chessPos;
+      if(0==i)
+        basePos = worldPos.clone();
+      else {
+        error += cv::norm(worldPos - basePos);
       }
-      else{
-        cv::Mat Homo_gripper2base_j_inv;
-        cv::invert(Homo_gripper2base[j], Homo_gripper2base_j_inv);
-        cv::Mat Homo_cam2gripper_inv;
-        cv::invert(Homo_cam2gripper, Homo_cam2gripper_inv);
-        cv::Mat predict_target2cam = Homo_cam2gripper_inv*Homo_gripper2base_j_inv*Homo_gripper2base[i] * Homo_cam2gripper * Homo_target2cam[i];
-        calib_eyeinhand::utils::HomogeneousMtr2RT(predict_target2cam, tempR, tempT);
-        cv::Rodrigues(tempR, rvec);
-        tvec = (cv::Mat_<double>(1, 3) << 
-          tempT.at<double>(0), 
-          tempT.at<double>(1), 
-          tempT.at<double>(2));
-      }
-
-      cv::Mat imgpoints;
-      cv::projectPoints(objs, rvec, tvec, K, cv::Mat(), imgpoints);
-      double rerror = 0;
-      for(int i=0;i<imgpoints.rows;i++)
-      {
-          cv::Vec2f e = imgpoints.at<cv::Vec2f>(i) - all_corners[j].at<cv::Vec2f>(i);
-          rerror += std::sqrt(e[0]*e[0]+e[1]*e[1]);
-      }
-      rerror /= imgpoints.rows;
-
-      rerror_mat.at<double>(i,j) = rerror;
     }
+    cout << j << ": " << error/Homo_target2cam.size()*1000 << " mm" << endl;
+    calib_eyeinhand::utils::save_error(j, error/Homo_target2cam.size()*1000, outputDir);
   }
-  calib_eyeinhand::utils::log_cvmat(rerror_mat, "rerror_mat[INIT]");
 
-
+  // //
+  cv::Mat rvec, tvec;
+ 
   // opt by ceres
   spdlog::info("start opt by ceres ...");
   double* parameters_ = new double[6*(R_target2cam.size())];
@@ -307,6 +282,10 @@ int main(int argc, char *argv[])
   parameters_cam2gripper[4] = tempT.at<double>(1);
   parameters_cam2gripper[5] = tempT.at<double>(2);
 
+  double parameters_KFxy[2];
+  parameters_KFxy[0] = K.at<float>(0,0);
+  parameters_KFxy[1] = K.at<float>(1,1);
+
   ceres::Problem problem;
   //
   for(int i=0; i<R_target2cam.size(); i++){
@@ -326,21 +305,27 @@ int main(int argc, char *argv[])
 
         ceres::CostFunction* cost_funciton = HandinEyeReprojectionError::Create(obj, corner, K_Eigen, gr1, gt1, gr2, gt2);
         ceres::LossFunction *lossFunction = new ceres::CauchyLoss(1.0);
-        problem.AddResidualBlock(cost_funciton, lossFunction, parameters_+i*6, parameters_cam2gripper);
+        if(i==j)
+          for(int cnt=0; cnt<R_target2cam.size(); cnt++)
+            problem.AddResidualBlock(cost_funciton, lossFunction, parameters_+i*6, parameters_cam2gripper, parameters_KFxy);
+        else
+            problem.AddResidualBlock(cost_funciton, lossFunction, parameters_+i*6, parameters_cam2gripper, parameters_KFxy);
+
       }
     }
   }
   // problem.SetParameterBlockConstant(parameters_);
+  problem.SetParameterBlockConstant(parameters_KFxy);
   
-  for(int i=0;i<all_plane_coefs.size();i++){
-    for(int k=0; k<objs.rows; k++){
-        Eigen::Vector3d obj(objs.at<cv::Vec3f>(k)[0], objs.at<cv::Vec3f>(k)[1], objs.at<cv::Vec3f>(k)[2]);
-        ceres::CostFunction* cost_funciton = Point2PlaneError::Create(all_plane_coefs[i], obj, false);
-        ceres::LossFunction *lossFunction = new ceres::CauchyLoss(1.0);
-        for(int j=0; j<all_plane_coefs.size()*all_plane_coefs.size();j++)
-          problem.AddResidualBlock(cost_funciton, lossFunction, parameters_+i*6);
-    }
-  }
+  // for(int i=0;i<all_plane_coefs.size();i++){
+  //   for(int k=0; k<objs.rows; k++){
+  //       Eigen::Vector3d obj(objs.at<cv::Vec3f>(k)[0], objs.at<cv::Vec3f>(k)[1], objs.at<cv::Vec3f>(k)[2]);
+  //       ceres::CostFunction* cost_funciton = Point2PlaneError::Create(all_plane_coefs[i], obj, false);
+  //       ceres::LossFunction *lossFunction = new ceres::CauchyLoss(1.0);
+  //       for(int j=0; j<all_plane_coefs.size()*all_plane_coefs.size();j++)
+  //         problem.AddResidualBlock(cost_funciton, lossFunction, parameters_+i*6);
+  //   }
+  // }
 
   ceres::Solver::Options options;
   options.linear_solver_type = ceres::DENSE_SCHUR;
@@ -360,6 +345,12 @@ int main(int argc, char *argv[])
   //     }
   // }
 
+  K.at<float>(0,0) = parameters_KFxy[0];
+  K.at<float>(1,1) = parameters_KFxy[1];
+
+  spdlog::info("KFxy: {}, {}", parameters_KFxy[0] ,parameters_KFxy[1]);
+  calib_eyeinhand::utils::log_cvmat(K, "K(CERES)");
+
   cv::Mat final_cam2gripper = (cv::Mat_<double>(1, 6) << 
     parameters_cam2gripper[3], 
     parameters_cam2gripper[4], 
@@ -369,90 +360,32 @@ int main(int argc, char *argv[])
     parameters_cam2gripper[2]);
   Homo_cam2gripper = calib_eyeinhand::utils::attitudeVectorToMatrix(final_cam2gripper, false, "");
   calib_eyeinhand::utils::log_cvmat(Homo_cam2gripper, "cam2gripper(CERES)");
+  calib_eyeinhand::utils::save_cvmat(Homo_cam2gripper, "cam2gripper(CERES)", outputDir);
+
   spdlog::info("valid chess board original point in base [after opt]...");
-  for (int i = 0; i < Homo_target2cam.size(); i++){
-    cv::Mat tmp = (cv::Mat_<double>(1, 6) << 
-      parameters_[i*6+3], 
-      parameters_[i*6+4], 
-      parameters_[i*6+5], 
-      parameters_[i*6+0], 
-      parameters_[i*6+1], 
-      parameters_[i*6+2]);
-    cv::Mat final_target2cam = calib_eyeinhand::utils::attitudeVectorToMatrix(tmp, false, "");
-    cv::Mat chessPos{ 0.04825,0.04825,0.0,1.0 };  //4*1矩阵，单独求机械臂坐标系下，标定板XYZ
-    cv::Mat worldPos = Homo_gripper2base[i] * Homo_cam2gripper * final_target2cam * chessPos;
-    cout << i << ": " << worldPos.t() << endl;
-
-    // // save corners as point cloud (camera coord)
-    // pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
-    // cloud->width = chessboardPoints.size();
-    // cloud->height = 1;
-    // cloud->is_dense = false;
-    // cloud->points.resize(chessboardPoints.size());
-    // for (size_t k = 0; k < chessboardPoints.size(); ++k) {
-    //   const auto& pt = chessboardPoints[k];
-    //   cv::Mat pt_homo = (cv::Mat_<double>(4, 1) << pt.x, pt.y, pt.z, 1.0);
-    //   cv::Mat pt_cam_homo = final_target2cam * pt_homo;
-    //   cloud->points[k].x = pt_cam_homo.at<double>(0, 0)*1000;
-    //   cloud->points[k].y = pt_cam_homo.at<double>(1, 0)*1000;
-    //   cloud->points[k].z = pt_cam_homo.at<double>(2, 0)*1000;
-    // }
-    // boost::filesystem::path filepath(imageFilenames[i]);
-    // std::string basename = filepath.stem().string();
-    // std::string out_file = outputDir + "/corner_" + basename + ".pcd";
-    // pcl::io::savePCDFile(out_file, *cloud);
-  }
-
-  // rerror
-  for(int i=0; i<R_target2cam.size(); i++){
-    for(int j=0; j<R_target2cam.size(); j++){
-
-      if(i==j){
-        rvec = (cv::Mat_<double>(1, 3) << 
-            parameters_[i*6+0], 
-            parameters_[i*6+1], 
-            parameters_[i*6+2]);
-        tvec = (cv::Mat_<double>(1, 3) << 
-          parameters_[i*6+3], 
-          parameters_[i*6+4], 
-          parameters_[i*6+5]);
+  for(int j=0; j<objs.rows; j++) {
+    double error = 0;
+    cv::Mat basePos;
+    for (int i = 0; i < Homo_target2cam.size(); i++){
+      cv::Mat tmp = (cv::Mat_<double>(1, 6) << 
+        parameters_[i*6+3], 
+        parameters_[i*6+4], 
+        parameters_[i*6+5], 
+        parameters_[i*6+0], 
+        parameters_[i*6+1], 
+        parameters_[i*6+2]);
+      cv::Mat final_target2cam = calib_eyeinhand::utils::attitudeVectorToMatrix(tmp, false, "");
+      cv::Mat chessPos = (cv::Mat_<double>(4, 1) <<objs.at<cv::Vec3f>(j)[0],objs.at<cv::Vec3f>(j)[1],0.0,1.0 );
+      cv::Mat worldPos = Homo_gripper2base[i] * Homo_cam2gripper * final_target2cam * chessPos;
+      if(0==i)
+        basePos = worldPos.clone();
+      else {
+        error += cv::norm(worldPos - basePos);
       }
-      else{
-        cv::Mat tmp = (cv::Mat_<double>(1, 6) << 
-          parameters_[i*6+3], 
-          parameters_[i*6+4], 
-          parameters_[i*6+5], 
-          parameters_[i*6+0], 
-          parameters_[i*6+1], 
-          parameters_[i*6+2]);
-        cv::Mat final_target2cam = calib_eyeinhand::utils::attitudeVectorToMatrix(tmp, false, "");
-        cv::Mat Homo_gripper2base_j_inv;
-        cv::invert(Homo_gripper2base[j], Homo_gripper2base_j_inv);
-        cv::Mat Homo_cam2gripper_inv;
-        cv::invert(Homo_cam2gripper, Homo_cam2gripper_inv);
-        cv::Mat predict_target2cam = Homo_cam2gripper_inv*Homo_gripper2base_j_inv*Homo_gripper2base[i] * Homo_cam2gripper * final_target2cam;
-        calib_eyeinhand::utils::HomogeneousMtr2RT(predict_target2cam, tempR, tempT);
-        cv::Rodrigues(tempR, rvec);
-        tvec = (cv::Mat_<double>(1, 3) << 
-          tempT.at<double>(0), 
-          tempT.at<double>(1), 
-          tempT.at<double>(2));
-      }
-
-      cv::Mat imgpoints;
-      cv::projectPoints(objs, rvec, tvec, K, cv::Mat(), imgpoints);
-      double rerror = 0;
-      for(int i=0;i<imgpoints.rows;i++)
-      {
-          cv::Vec2f e = imgpoints.at<cv::Vec2f>(i) - all_corners[j].at<cv::Vec2f>(i);
-          rerror += std::sqrt(e[0]*e[0]+e[1]*e[1]);
-      }
-      rerror /= imgpoints.rows;
-
-      rerror_mat.at<double>(i,j) = rerror;
     }
+    cout << j << ": " << error/Homo_target2cam.size()*1000 << " mm" << endl;
+    calib_eyeinhand::utils::save_error(j, error/Homo_target2cam.size()*1000, outputDir);
   }
-  calib_eyeinhand::utils::log_cvmat(rerror_mat, "rerror_mat[CERES]");
 
 
   delete[] parameters_;
