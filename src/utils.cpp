@@ -380,19 +380,19 @@ bool calib_eyeinhand::utils::detectCharucoCornersAndPose(
 
 bool calib_eyeinhand::utils::detectChessCornersAndPose(const cv::Size & boardSize, const cv::Mat & image, const cv::Mat & K, const cv::Mat & D, const cv::Mat & objs, cv::Mat & imageCopy, cv::Mat & corners, cv::Mat & rvec, cv::Mat & tvec, double & rerror)
 {
-	cv::Mat gray, undistImg;
-	cv::undistort(image, undistImg, K, D);
-    undistImg.copyTo(imageCopy);
-    cv::cvtColor(undistImg, gray, cv::COLOR_BGR2GRAY);
+	// 直接在原始(含畸变)图像上检测角点，后续 BA 可用畸变模型投影
+	cv::Mat gray;
+    image.copyTo(imageCopy);
+    cv::cvtColor(image, gray, cv::COLOR_BGR2GRAY);
 
 	bool success = cv::findChessboardCorners(gray, boardSize, corners, cv::CALIB_CB_ADAPTIVE_THRESH + cv::CALIB_CB_NORMALIZE_IMAGE);
 	if(success && corners.rows==boardSize.width*boardSize.height){
 		cv::cornerSubPix(gray, corners, cv::Size(3,3), cv::Size(-1, -1), cv::TermCriteria(cv::TermCriteria::EPS + cv::TermCriteria::COUNT, 30, 0.1));
-		bool valid = cv::solvePnP(objs, corners, K, cv::Mat(), rvec, tvec);
+		bool valid = cv::solvePnP(objs, corners, K, D, rvec, tvec);
 		if(valid){
 			// calc error
             cv::Mat imgpoints;
-            cv::projectPoints(objs, rvec, tvec, K, cv::Mat(), imgpoints);
+            cv::projectPoints(objs, rvec, tvec, K, D, imgpoints);
             rerror = 0;
             for(int i=0;i<imgpoints.rows;i++)
             {
@@ -481,4 +481,3 @@ void calib_eyeinhand::utils::extractPlaneAndProjectiton(const pcl::PointCloud<pc
     plane->height = 1;
     plane->width = plane1->points.size();
 }
-
